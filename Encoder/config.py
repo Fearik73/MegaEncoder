@@ -33,7 +33,7 @@ DB_URL = _required("DB_URL")
 DB_NAME = _env("DB_NAME", "")
 
 # ---------------- Updates (/update, update.sh) ----------------
-UPSTREAM_REPO = os.environ.get("UPSTREAM_REPO", "").strip()      # e.g. https://github.com/you/Encoder.git
+UPSTREAM_REPO = os.environ.get("UPSTREAM_REPO", "https://github.com/Fearik73/MegaEncoder").strip()      # e.g. https://github.com/you/Encoder.git
 UPSTREAM_BRANCH = os.environ.get("UPSTREAM_BRANCH", "").strip()  # empty = current branch
 
 # ---------------- Folders ----------------
