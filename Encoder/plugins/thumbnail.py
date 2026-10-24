@@ -6,6 +6,7 @@ from pyrogram.types import Message
 
 from Encoder.config import THUMB_DIR
 from Encoder.utils.database.access_db import db
+from Encoder.utils.encoding.thumb import get_user_thumb
 from Encoder.utils.filters import allowed
 from Encoder.utils.helpers import log_error
 
@@ -41,3 +42,12 @@ async def cmd_delthumb(client, msg: Message):
             deleted = True
     await db.delete_user_thumb(uid)
     await msg.reply(f"<b>Thumbnail Deleted ✅</b>" if deleted else f"<b>❌ Thumbnail not found</b>")
+
+
+@Client.on_message(filters.command("vt") & allowed)
+async def cmd_viewthumb(client, msg: Message):
+    path = await get_user_thumb(msg.from_user.id)
+    if not path:
+        return await msg.reply(f"<b>❌ Thumbnail not found</b>")
+    await msg.reply_photo(path, caption=f"<b>🖼️ Your saved image</b>")
+    
