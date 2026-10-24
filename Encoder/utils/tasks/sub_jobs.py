@@ -10,6 +10,9 @@ from Encoder.utils.display_progress import (
 from Encoder.utils.encoding.thumb import (
     get_video_duration, get_user_thumb, extract_auto_thumb,
 )
+from Encoder.utils.logs.tasklog import (
+    start_log, tlog, tfail, send_failure_log,
+)
 from Encoder.utils.downloads.telegram import stream_download
 from Encoder.utils.tasks.cancel import (
     register_task, clear_task, is_cancelled, clear_cancelled, new_task_id,
@@ -28,6 +31,11 @@ class _CancellableTask:
     def kill(self):
         if self._task and not self._task.done():
             self._task.cancel()
+
+
+async def _report_failure(msg, task_id, reason, stage, detail=None, exc=None, status=None, fallback=None):
+    tfail(task_id, stage, detail or reason, exc)
+    await send_failure_log(msg, task_id, reason, status, fallback)
 
 
 async def _download_video(client, src_msg, dest_path: str, status_msg, task_id: int, uid: int):
@@ -55,6 +63,10 @@ async def run_addsub_job(client, job: dict, group_id: int):
     uid       = job["uid"]
     task_id   = new_task_id()
     clear_cancelled(task_id)
+    start_log(
+        "addsub", task_id, uid, group_id,
+        subs=[{"lang": s.get("lang"), "file": os.path.basename(str(s.get("path")))} for s in subs],
+    )
 
     old_status = job.get("status_msg")
     if old_status and job.get("was_queued"):
@@ -85,7 +97,10 @@ async def run_addsub_job(client, job: dict, group_id: int):
     except Exception as e:
         log_error(f"run_addsub_job: video download failed (uid={uid})", e)
         shutil.rmtree(dest_dir, ignore_errors=True)
-        return await safe_edit(status, f"❌ **Video download failed**", reply_markup=None)
+        return await _report_failure(msg, task_id, "Video download failed", "download", exc=e,
+                                     status=status, fallback="❌ **Video download failed**")
+
+    tlog(task_id, "download", f"video downloaded ({os.path.getsize(video_path)} bytes): {orig_name}")
 
     if is_cancelled(task_id):
         clear_cancelled(task_id)
@@ -108,14 +123,16 @@ async def run_addsub_job(client, job: dict, group_id: int):
         iso = LANG_ISO.get(s["lang"], "und")
         cmd += [f"-metadata:s:s:{i}", f"language={iso}", f"-metadata:s:s:{i}", f"title={s['lang']}"]
     cmd += ["-progress", "pipe:1", "-nostats", out_path]
+    tlog(task_id, "merge", "cmd: " + " ".join(cmd))
 
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         shutil.rmtree(dest_dir, ignore_errors=True)
-        return await safe_edit(status, f"❌ **ffmpeg not found on this system.**", reply_markup=None)
+        return await _report_failure(msg, task_id, "ffmpeg not found", "merge", exc=e,
+                                     status=status, fallback="❌ **ffmpeg not found on this system.**")
 
     register_task(task_id, proc, "merging", uid=uid)
 
@@ -187,7 +204,9 @@ async def run_addsub_job(client, job: dict, group_id: int):
         tail = b"".join(stderr_chunks).decode(errors="replace").strip()[-1200:]
         print(f"[ERROR] run_addsub_job: ffmpeg merge failed (uid={uid}, returncode={proc.returncode}): {tail}")
         shutil.rmtree(dest_dir, ignore_errors=True)
-        return await safe_edit(status, f"❌ **Merge failed**", reply_markup=None)
+        return await _report_failure(msg, task_id, "Merge failed", "merge",
+                                     detail=f"ffmpeg returncode={proc.returncode}\n{tail}",
+                                     status=status, fallback="❌ **Merge failed**")
 
     await safe_edit(status, f"**ᴜᴘʟᴏᴀᴅɪɴɢ...**", reply_markup=cancel_button(task_id, uid))
     thumb      = await get_user_thumb(uid)
@@ -211,7 +230,8 @@ async def run_addsub_job(client, job: dict, group_id: int):
         await safe_edit(status, f"**Cancelled!**", reply_markup=None)
     except Exception as e:
         log_error(f"run_addsub_job: upload failed (uid={uid})", e)
-        await safe_edit(status, f"❌ **Upload failed**", reply_markup=None)
+        await _report_failure(msg, task_id, "Upload failed", "upload", exc=e,
+                              status=status, fallback="❌ **Upload failed**")
     finally:
         clear_cancelled(task_id)
         shutil.rmtree(dest_dir, ignore_errors=True)
@@ -231,6 +251,7 @@ async def _run_extractsub_job(client, job: dict, group_id: int):
     uid = job["uid"]
     task_id = new_task_id()
     clear_cancelled(task_id)
+    start_log("extractsub", task_id, uid, group_id)
 
     file = msg.video or msg.document
 
@@ -261,7 +282,8 @@ async def _run_extractsub_job(client, job: dict, group_id: int):
     except Exception as e:
         log_error(f"run_extractsub_job: download failed (uid={uid})", e)
         shutil.rmtree(dest_dir, ignore_errors=True)
-        return await safe_edit(status, f"❌ **Download failed**", reply_markup=None)
+        return await _report_failure(msg, task_id, "Download failed", "download", exc=e,
+                                     status=status, fallback="❌ **Download failed**")
 
     if is_cancelled(task_id):
         clear_cancelled(task_id)
@@ -295,19 +317,26 @@ async def _run_extractsub_job(client, job: dict, group_id: int):
             "ffmpeg", "-y", "-i", video_path, "-map", f"0:{st['index']}", "-c:s", "copy", out_path,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
-        await proc.communicate()
+        _, err = await proc.communicate()
         if proc.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             extracted.append((out_path, out_name, lang_name))
+        else:
+            tlog(task_id, "extract",
+                 f"stream {st['index']} ({codec or 'unknown'}) failed rc={proc.returncode}: "
+                 f"{err.decode(errors='replace').strip()[-800:]}", "warn")
 
     if not extracted:
         shutil.rmtree(dest_dir, ignore_errors=True)
-        return await safe_edit(status, f"❌ **Subtitle extraction failed.**", reply_markup=None)
+        return await _report_failure(msg, task_id, "Subtitle extraction failed", "extract",
+                                     detail=f"no subtitle stream could be extracted ({len(streams)} found)",
+                                     status=status, fallback="❌ **Subtitle extraction failed.**")
 
     thumb      = await get_user_thumb(uid)
     auto_thumb = None
     if not thumb:
         auto_thumb = await extract_auto_thumb(video_path, uid)
         thumb      = auto_thumb
+    upload_failed = False
 
     for i, (path, name, lang_name) in enumerate(extracted, 1):
         if is_cancelled(task_id):
@@ -321,6 +350,11 @@ async def _run_extractsub_job(client, job: dict, group_id: int):
             )
         except Exception as e:
             log_error(f"run_extractsub_job: upload of subtitle {i}/{len(extracted)} failed (uid={uid})", e)
+            tfail(task_id, "upload", f"upload of subtitle {i}/{len(extracted)} failed ({name})", e)
+            upload_failed = True
+
+    if upload_failed:
+        await send_failure_log(msg, task_id, "Subtitle upload failed", None, "❌ **Some subtitle uploads failed**")
 
     clear_cancelled(task_id)
     try:
@@ -329,3 +363,4 @@ async def _run_extractsub_job(client, job: dict, group_id: int):
         pass
     shutil.rmtree(dest_dir, ignore_errors=True)
     if auto_thumb and os.path.exists(auto_thumb): os.remove(auto_thumb)
+    
