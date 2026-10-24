@@ -38,6 +38,7 @@ async def cmd_help(client, msg: Message):
         f"<blockquote><b>/metadata Your_Text</b> — ꜱᴇᴛ ᴍᴇᴛᴀᴅᴀᴛᴀ</blockquote>\n\n<b>➲ ꜱᴇᴛᴛɪɴɢꜱ ᴍᴇɴᴜ</b>\n<blockquote><b>/us</b> — ᴀʟʟ ꜱᴇᴛᴛɪɴɢꜱ ᴡɪᴛʜ ʙᴜᴛᴛᴏɴꜱ (ᴀʟꜱᴏ /usersettings)</blockquote>\n\n"
         f"<b>➲ ᴛʜᴜᴍʙɴᴀɪʟ</b>\n"
         f"<blockquote><b>/t</b> — ꜱᴇᴛ ᴛʜᴜᴍʙɴᴀɪʟ (ʀᴇᴘʟʏ ᴛᴏ ᴘʜᴏᴛᴏ)\n"
+        f"<b>/vt</b> — ᴠɪᴇᴡ ꜱᴀᴠᴇᴅ ᴛʜᴜᴍʙɴᴀɪʟ\n"
         f"<b>/dt</b> — ᴅᴇʟᴇᴛᴇ ꜱᴀᴠᴇᴅ ᴛʜᴜᴍʙɴᴀɪʟ</blockquote>\n\n"
     )
     admin_cmds = (
@@ -53,3 +54,4 @@ async def cmd_help(client, msg: Message):
         f"<b>/restart</b> — ʀᴇꜱᴛᴀʀᴛ ʙᴏᴛ</blockquote>\n"
     )
     await msg.reply(user_cmds + (admin_cmds if uid in ADMIN_IDS else ""))
+    
