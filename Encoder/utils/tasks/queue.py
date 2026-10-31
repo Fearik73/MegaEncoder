@@ -7,6 +7,7 @@ _queues:            dict[int, asyncio.Queue] = {}
 _workers_started:   dict[int, bool]          = {}
 _group_pending:     dict[int, int]           = defaultdict(int)
 _active_group_uid:  dict[int, int]           = {}
+_active_group_kind: dict[int, str]           = {}
 
 
 def _get_queue(group_id: int) -> asyncio.Queue:
@@ -37,6 +38,22 @@ def is_group_active(group_id: int) -> bool:
 
 def get_active_uid(group_id: int) -> int | None:
     return _active_group_uid.get(group_id)
+
+
+def get_active_kind(group_id: int) -> str | None:
+    return _active_group_kind.get(group_id)
+
+
+def list_waiting(group_id: int) -> list[tuple[str, int]]:
+    q = _queues.get(group_id)
+    if not q:
+        return []
+    out = []
+    for job in list(q._queue):
+        m = job.get("msg") or job.get("src_msg")
+        uid = job.get("uid") or (m.from_user.id if m and m.from_user else 0)
+        out.append((job.get("kind", "encode"), uid))
+    return out
 
 
 def get_all_active_groups() -> list[int]:
@@ -72,6 +89,7 @@ async def group_queue_worker(client, group_id: int):
             job = await q.get()
             uid = job.get("uid") or job["msg"].from_user.id
             _active_group_uid[group_id] = uid
+            _active_group_kind[group_id] = job.get("kind", "encode")
             _group_pending[group_id] = max(0, _group_pending.get(group_id, 0) - 1)
             try:
                 kind = job.get("kind", "encode")
@@ -100,6 +118,8 @@ async def group_queue_worker(client, group_id: int):
                     log_error("group_queue_worker: failed to notify user", e2)
             finally:
                 _active_group_uid.pop(group_id, None)
+                _active_group_kind.pop(group_id, None)
                 q.task_done()
     finally:
         _workers_started[group_id] = False
+        
