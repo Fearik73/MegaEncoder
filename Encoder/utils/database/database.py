@@ -32,6 +32,7 @@ class Database:
         self.db = self._client[database_name]
         self.col      = self.db.encoder_users
         self.groupcol = self.db.encoder_groups
+        self.statcol  = self.db.encoder_stats
 
     # ---------------- Per-user encode settings ----------------
     async def get_settings(self, uid: int) -> dict:
@@ -82,6 +83,7 @@ class Database:
             "video":    user.get("video"),
             "audio":    user.get("audio"),
             "subtitle": user.get("subtitle"),
+            "encoded_by": user.get("encoded_by"),
         }
 
     async def set_metadata_field(self, uid: int, field: str, value):
@@ -89,6 +91,23 @@ class Database:
             await self.col.update_one({"_id": int(uid)}, {"$set": {field: value}}, upsert=True)
         except Exception as e:
             logger.error(f"Error setting metadata field {field} for {uid}: {e}")
+
+    # ---------------- Bandwidth ----------------
+    async def add_bandwidth(self, month: str, rx: int, tx: int):
+        try:
+            await self.statcol.update_one(
+                {"_id": f"bw_{month}"}, {"$inc": {"rx": int(rx), "tx": int(tx)}}, upsert=True
+            )
+        except Exception as e:
+            logger.error(f"Error saving bandwidth for {month}: {e}")
+
+    async def get_bandwidth(self, month: str) -> tuple[int, int]:
+        try:
+            doc = await self.statcol.find_one({"_id": f"bw_{month}"}) or {}
+        except Exception as e:
+            logger.error(f"Error reading bandwidth for {month}: {e}")
+            doc = {}
+        return int(doc.get("rx", 0)), int(doc.get("tx", 0))
 
     # ---------------- Thumbnails ----------------
     async def set_user_thumb(self, uid: int, thumb_bytes: bytes):
@@ -144,3 +163,4 @@ class Database:
         except Exception as e:
             logger.error(f"Error fetching authorized groups: {e}")
             return []
+            
