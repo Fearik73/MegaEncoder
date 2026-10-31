@@ -65,6 +65,9 @@ class EncoderBot(Client):
         me = await self.get_me()
         print(f"✅ Starting @{me.username}")
 
+        from Encoder.utils.bandwidth import tracker
+        asyncio.create_task(tracker())
+
         if DB_CHANNEL:
             try:
                 chat = await self.get_chat(DB_CHANNEL)
