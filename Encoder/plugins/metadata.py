@@ -17,5 +17,7 @@ async def cmd_metadata(client, msg: Message):
         await db.set_metadata_field(uid, "audio", value)
         await db.set_metadata_field(uid, "subtitle", value)
         await db.set_metadata_field(uid, "video", value)
+        await db.set_metadata_field(uid, "encoded_by", value)
         await db.set_metadata_status(uid, "On")
         return await msg.reply(f"**✅ Metadata Saved: **{value}")
+        
