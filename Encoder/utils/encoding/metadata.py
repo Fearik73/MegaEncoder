@@ -25,6 +25,12 @@ async def add_metadata(input_path: str, output_path: str, user_id: int, db) -> N
     if fields.get("subtitle"):
         cmd += ["-metadata:s:s", f'title={fields["subtitle"]}']
 
+    if fields.get("encoded_by"):
+        eb = fields["encoded_by"]
+        cmd += ["-metadata", f"encoded_by={eb}"]
+        for st in ("v", "a", "s"):
+            cmd += [f"-metadata:s:{st}", f"encoded_by={eb}"]
+
     cmd += ["-map", "0", "-c", "copy", "-loglevel", "error", output_path]
 
     process = await asyncio.create_subprocess_exec(
@@ -36,3 +42,4 @@ async def add_metadata(input_path: str, output_path: str, user_id: int, db) -> N
 
     if process.returncode != 0:
         raise RuntimeError(f"FFmpeg error: {stderr.decode(errors='replace')}")
+        
