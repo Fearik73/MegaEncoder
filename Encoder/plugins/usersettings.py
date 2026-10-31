@@ -19,7 +19,7 @@ from Encoder.utils.settings.settings import (
 TIMEOUT = 60
 
 
-META_FIELDS = ("title", "author", "artist", "audio", "subtitle", "video")
+META_FIELDS = ("title", "author", "artist", "audio", "subtitle", "video", "encoded_by")
 
 
 META_DESC = "Your channel name that should be used while editing metadata of the file"
@@ -101,19 +101,19 @@ async def build_page(page, uid, name):
         meta_line = f"{html.escape(value)} ({status})" if value else "Not Exists"
         text = (
             f"㊂ <b>Encode Settings for {name}</b>\n\n"
-            f"┎ Send Type : {'Document' if s['send_type'] == 'document' else 'Media'}\n"
-            f"┠ Rename Source : {RENAME_LABEL.get(s['rename_source'], s['rename_source'])}\n"
-            f"┠ Metadata : {meta_line}\n"
-            f"┠ CRF : {s['crf']}\n"
-            f"┠ Preset : {s['preset']}\n"
-            f"┠ Tune : {s['tune']}\n"
-            f"┠ Resolution : {RES_LABEL.get(s['resolution'], s['resolution'])}\n"
-            f"┠ Audio Channel : {CHANNEL_LABEL.get(s['audio_channel'], s['audio_channel'])}\n"
-            f"┠ Audio Bitrate : {_bitrate_label(s['audio_bitrate'])}\n"
-            f"┠ Audio Codec : {ACODEC_LABEL.get(s['audio_codec'], s['audio_codec'])}\n"
-            f"┠ Video Codec : {VCODEC_LABEL.get(s['codec'], s['codec'])}\n"
-            f"┠ Bit Depth : {s['bit_depth']} bit\n"
-            f"┖ FPS : {_fps_label(s['fps'])}"
+            f"┎ <b>Send Type :</b> {'Document' if s['send_type'] == 'document' else 'Media'}\n"
+            f"┠ <b>Rename Source :</b> {RENAME_LABEL.get(s['rename_source'], s['rename_source'])}\n"
+            f"┠ <b>Metadata :<b> {meta_line}\n"
+            f"┠ <b>CRF :</b> {s['crf']}\n"
+            f"┠ <b>Preset :</b> {s['preset']}\n"
+            f"┠ <b>Tune :</b> {s['tune']}\n"
+            f"┠ <b>Resolution :</b> {RES_LABEL.get(s['resolution'], s['resolution'])}\n"
+            f"┠ <b>Audio Channel :</b> {CHANNEL_LABEL.get(s['audio_channel'], s['audio_channel'])}\n"
+            f"┠ <b>Audio Bitrate :</b> {_bitrate_label(s['audio_bitrate'])}\n"
+            f"┠ <b>Audio Codec :</b> {ACODEC_LABEL.get(s['audio_codec'], s['audio_codec'])}\n"
+            f"┠ <b>Video Codec :</b> {VCODEC_LABEL.get(s['codec'], s['codec'])}\n"
+            f"┠ <b>Bit Depth :</b> {s['bit_depth']} bit\n"
+            f"┖ <b>FPS :</b> {_fps_label(s['fps'])}"
         )
         send_label = "Send as Media" if s["send_type"] == "document" else "Send as Document"
         kb = [
@@ -246,25 +246,25 @@ async def build_page(page, uid, name):
 
 async def prompt_text(kind, uid):
     s = await db.get_settings(uid)
-    tail = f"\n\n⌬ You have {TIMEOUT}s — send the value now."
+    tail = f"\n\n⌬ You have {TIMEOUT}s — send the value now"
     if kind == "meta":
         _, value = await _meta_state(uid)
-        return (f"㊂ <b>Metadata :</b>\n\nSend the metadata text (e.g. <code>@Od3ns_Animes</code>)\n\n"
+        return (f"㊂ <b>Metadata :</b>\n\nSend the metadata text (e.g. Fearik)\n\n"
                 f"➲ Current : {html.escape(value) if value else 'Not Exists'}{tail}")
     if kind == "crf":
         return f"㊂ <b>CRF :</b>\n\nSend a CRF value (0 – 51)\n\n➲ Current : {s['crf']}{tail}"
     if kind == "res":
-        return (f"㊂ <b>Resolution :</b>\n\nSend width x height with even numbers (e.g. <code>1280x720</code>)\n\n"
+        return (f"㊂ <b>Resolution :</b>\n\nSend width x height with even numbers (e.g. 1280x720)\n\n"
                 f"➲ Current : {RES_LABEL.get(s['resolution'], s['resolution'])}{tail}")
     if kind == "ab":
         codec = s["audio_codec"]
         limit = f" (max {ACODEC_MAX_KBPS[codec]}k for {ACODEC_LABEL[codec]})" if codec in ACODEC_MAX_KBPS else ""
-        return (f"㊂ <b>Audio Bitrate :</b>\n\nSend a bitrate (e.g. <code>128k</code>){limit}\n\n"
+        return (f"㊂ <b>Audio Bitrate :</b>\n\nSend a bitrate (e.g. 128k){limit}\n\n"
                 f"➲ Current : {_bitrate_label(s['audio_bitrate'])}{tail}")
     if kind == "fps":
-        return (f"㊂ <b>FPS :</b>\n\nSend a frame rate (e.g. <code>24</code>, <code>23.976</code> or "
-                f"<code>24000/1001</code>) or <code>copy</code>\n\n➲ Current : {_fps_label(s['fps'])}{tail}")
-    return "Send the value."
+        return (f"㊂ <b>FPS :</b>\n\nSend a frame rate (e.g. 24, 23.976 or "
+                f"24000/1001) or copy\n\n➲ Current : {_fps_label(s['fps'])}{tail}")
+    return "Send the value"
 
 
 # ---------------- actions (buttons) ----------------
@@ -356,7 +356,7 @@ async def apply_input(kind, uid, text):
 
     if kind == "meta":
         if not text or len(text) > 128:
-            return False, "❌ Send a metadata text (max 128 characters)."
+            return False, "❌ Send a metadata text (max 128 characters)"
         _, had = await _meta_state(uid)
         for f in META_FIELDS:
             await db.set_metadata_field(uid, f, text)
@@ -366,36 +366,36 @@ async def apply_input(kind, uid, text):
 
     if kind == "crf":
         if not text.isdigit() or not 0 <= int(text) <= 51:
-            return False, "❌ CRF must be a number from 0 to 51."
+            return False, "❌ CRF must be a number from 0 to 51"
         await db.set_setting(uid, "crf", int(text))
         return True, None
 
     if kind == "res":
         value = text.lower().replace("×", "x")
         if not is_valid_resolution(value):
-            return False, "❌ Use width x height with even numbers, e.g. 1280x720."
+            return False, "❌ Use width x height with even numbers, e.g. 1280x720"
         await db.set_setting(uid, "resolution", value)
         return True, None
 
     if kind == "ab":
         kbps = parse_kbps(text)
         if kbps is None or kbps < 8:
-            return False, "❌ Send a bitrate like 128k (minimum 8k)."
+            return False, "❌ Send a bitrate like 128k (minimum 8k)"
         codec = s["audio_codec"]
         limit = ACODEC_MAX_KBPS.get(codec)
         if limit and kbps > limit:
-            return False, f"❌ Max audio bitrate for {ACODEC_LABEL[codec]} is {limit}k."
+            return False, f"❌ Max audio bitrate for {ACODEC_LABEL[codec]} is {limit}k"
         await db.set_setting(uid, "audio_bitrate", f"{kbps}k")
         return True, None
 
     if kind == "fps":
         fps = parse_fps(text)
         if fps is None:
-            return False, "❌ Send a frame rate like 24, 23.976, 24000/1001 or copy."
+            return False, "❌ Send a frame rate like 24, 23.976, 24000/1001 or copy"
         await db.set_setting(uid, "fps", fps)
         return True, None
 
-    return False, "❌ Nothing to set."
+    return False, "❌ Nothing to set"
 
 
 # ---------------- pyrogram glue ----------------
@@ -483,3 +483,4 @@ async def us_input(client, msg):
         text, kb = await build_page(PAGE_FOR[st["kind"]], msg.from_user.id, st["name"])
         await _edit(st["msg"], text, kb)
     raise StopPropagation
+            
