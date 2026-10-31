@@ -1,5 +1,7 @@
 import asyncio
 import os
+import shutil
+import time
 
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -34,12 +36,32 @@ def _build_sub_status_text(subs: list) -> str:
     return "\n".join(lines)
 
 
-async def _sub_timeout(uid: int, session: dict, wait_msg: Message):
-    await asyncio.sleep(_VIDEO_WAIT_TIMEOUT)
-    if _sub_sessions.get(uid) is session and session["stage"] == "video":
+def _drop_session(uid: int, session: dict):
+    t = session.get("timer")
+    if t:
+        t.cancel()
+    if _sub_sessions.get(uid) is session:
         _sub_sessions.pop(uid, None)
+    shutil.rmtree(session["dir"], ignore_errors=True)
+
+
+def _arm_timeout(uid: int, session: dict):
+    t = session.get("timer")
+    if t:
+        t.cancel()
+    session["timer"] = asyncio.create_task(_sub_timeout(uid, session))
+
+
+async def _sub_timeout(uid: int, session: dict):
+    await asyncio.sleep(_VIDEO_WAIT_TIMEOUT)
+    if _sub_sessions.get(uid) is not session:
+        return
+    target = session.get("prompt_msg") or session.get("wait_msg")
+    session["timer"] = None
+    _drop_session(uid, session)
+    if target:
         try:
-            await safe_edit(wait_msg, f"<b>❗ꜱᴇᴀꜱᴏɴ ᴄᴀɴᴄᴇʟʟᴇᴅ</b>\n\n<i>_ɴᴏ ᴠɪᴅᴇᴏ ʀᴇᴄᴇɪᴠᴇᴅ ᴡɪᴛʜɪɴ {_VIDEO_WAIT_TIMEOUT} ꜱᴇᴄᴏɴᴅꜱ</i>")
+            await safe_edit(target, f"<b>❗ꜱᴇᴀꜱᴏɴ ᴇxᴘɪʀᴇᴅ</b>\n\n<i>_ɴᴏ ᴀᴄᴛɪᴠɪᴛʏ ꜰᴏʀ {_VIDEO_WAIT_TIMEOUT} ꜱᴇᴄᴏɴᴅꜱ. ᴜꜱᴇ /addsub ᴛᴏ ꜱᴛᴀʀᴛ ᴀɢᴀɪɴ_</i>")
         except Exception:
             pass
 
@@ -60,16 +82,22 @@ async def cmd_sub(client, msg: Message):
     uid = msg.from_user.id
     if is_xsub_active(uid):
         return await msg.reply(f"⚠️ ꜰɪʀꜱᴛ ʟᴇᴛ ᴛʜᴇ ʙᴏᴛ ꜰɪɴɪꜱʜ ɪᴛ'ꜱ ᴇxᴛʀᴀᴄᴛɪᴏɴ ᴘʀᴏᴄᴇꜱꜱ")
-    session = {"stage": "video", "video_msg": None, "prompt_msg": None, "subs": []}
+    old = _sub_sessions.get(uid)
+    if old:
+        _drop_session(uid, old)
+    session = {"stage": "video", "video_msg": None, "prompt_msg": None, "wait_msg": None, "subs": [], "timer": None,
+               "dir": os.path.join(DOWNLOAD_DIR, f"sub_{uid}_{int(time.time())}")}
     _sub_sessions[uid] = session
-    wait_msg = await msg.reply(f"<b>➲ ꜱᴇɴᴅ ᴍᴇ ᴀ ᴠɪᴅᴇᴏ ꜰɪʟᴇ</b>")
-    asyncio.create_task(_sub_timeout(uid, session, wait_msg))
+    session["wait_msg"] = await msg.reply(f"<b>➲ ꜱᴇɴᴅ ᴍᴇ ᴀ ᴠɪᴅᴇᴏ ꜰɪʟᴇ</b>")
+    _arm_timeout(uid, session)
 
 
 @Client.on_message(filters.command("extractsub") & allowed)
 async def cmd_xsub(client, msg: Message):
     uid = msg.from_user.id
-    _sub_sessions.pop(uid, None)
+    old = _sub_sessions.get(uid)
+    if old:
+        _drop_session(uid, old)
     mark_xsub_active(uid)
     wait_msg = await msg.reply(f"<b>➲ ꜱᴇɴᴅ ᴍᴇ ᴀ ᴠɪᴅᴇᴏ ꜰɪʟᴇ</b>")
     _xsub_waiting[uid] = wait_msg
@@ -89,6 +117,7 @@ async def on_sub_media(client, msg: Message):
     session = _sub_sessions.get(uid)
     if not session:
         return
+    _arm_timeout(uid, session)
 
     if session["stage"] == "video":
         file = msg.video or msg.document
@@ -106,6 +135,7 @@ async def on_sub_media(client, msg: Message):
             f"<i>ɴᴏᴡ ꜱᴇɴᴅ ᴍᴇ ꜱᴜʙᴛɪᴛʟᴇ ꜰɪʟᴇꜱ</i>"
         )
         session["prompt_msg"] = prompt
+        _arm_timeout(uid, session)
         return
 
     if msg.video:
@@ -119,7 +149,7 @@ async def on_sub_media(client, msg: Message):
     if ext not in SUB_EXTS:
         return await msg.reply(f"<b>❗ᴜɴꜱᴜᴘᴘᴏʀᴛᴇᴅ ꜱᴜʙᴛɪᴛʟᴇ ꜰᴏʀᴍᴀᴛ</b>")
 
-    dest_dir = os.path.join(DOWNLOAD_DIR, f"sub_{uid}")
+    dest_dir = session["dir"]
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, f"{len(session['subs'])}_{filename}")
     try:
@@ -127,12 +157,18 @@ async def on_sub_media(client, msg: Message):
     except Exception as e:
         return await msg.reply(f"<b>❌ Failed to download subtitle</b>")
 
+    if _sub_sessions.get(uid) is not session:
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
+        return
+
     caption_text = (msg.caption or "").strip()
     lang = detect_language(caption_text) if caption_text else "Unknown"
     if lang == "Unknown":
         lang = detect_language(filename)
 
     session["subs"].append({"path": dest_path, "name": filename, "lang": lang, "ext": ext.lstrip(".")})
+    _arm_timeout(uid, session)
 
     text = _build_sub_status_text(session["subs"])
     prompt = session.get("prompt_msg")
@@ -149,11 +185,14 @@ async def cmd_esub(client, msg: Message):
     if not session:
         return await msg.reply(f"<b>➲ ᴜꜱᴇ /addsub ꜰɪʀꜱᴛ</b>")
     if session["stage"] != "subs" or not session.get("video_msg") or not session["subs"]:
-        _sub_sessions.pop(uid, None)
+        _drop_session(uid, session)
         return await msg.reply(f"<b>❗ꜱᴇᴀꜱᴏɴ ᴄᴀɴᴄᴇʟʟᴇᴅ</b>\n\n<i>_ᴠɪᴅᴇᴏ ᴏʀ ꜱᴜʙᴛɪᴛʟᴇꜱ ᴡᴇʀᴇ ᴍɪꜱꜱɪɴɢ. ᴜꜱᴇ /addsub ᴛᴏ ꜱᴛᴀʀᴛ ᴀɢᴀɪɴ_</i>")
 
     video_msg = session["video_msg"]
     subs      = session["subs"]
+    t = session.get("timer")
+    if t:
+        t.cancel()
     _sub_sessions.pop(uid, None)
 
     group_id   = msg.chat.id
@@ -168,7 +207,7 @@ async def cmd_esub(client, msg: Message):
         f"<b>ꜱᴛᴀʀᴛɪɴɢ...</b>"
     )
     job = {
-        "kind": "addsub", "msg": msg, "video_msg": video_msg, "subs": subs, "uid": uid,
+        "kind": "addsub", "msg": msg, "video_msg": video_msg, "subs": subs, "uid": uid, "sub_dir": session["dir"],
         "status_msg": status_msg, "was_queued": was_queued,
     }
     await enqueue(group_id, job)
@@ -212,3 +251,4 @@ async def on_xsub_video(client, msg: Message):
 
     if not is_worker_running(group_id):
         asyncio.ensure_future(group_queue_worker(client, group_id))
+    
