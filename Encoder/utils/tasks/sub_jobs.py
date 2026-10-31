@@ -14,6 +14,7 @@ from Encoder.utils.logs.tasklog import (
     start_log, tlog, tfail, send_failure_log,
 )
 from Encoder.utils.downloads.telegram import stream_download
+from Encoder.utils.encoding.splitter import split_video, SPLIT_SIZE
 from Encoder.utils.tasks.cancel import (
     register_task, clear_task, is_cancelled, clear_cancelled, new_task_id,
 )
@@ -57,6 +58,18 @@ async def _download_video(client, src_msg, dest_path: str, status_msg, task_id: 
 
 # mux subtitle files into video
 async def run_addsub_job(client, job: dict, group_id: int):
+    msg       = job["msg"]
+    video_msg = job["video_msg"]
+    subs      = job["subs"]
+    uid       = job["uid"]
+    try:
+        await _run_addsub_job(client, job, group_id)
+    finally:
+        if job.get("sub_dir"):
+            shutil.rmtree(job["sub_dir"], ignore_errors=True)
+
+
+async def _run_addsub_job(client, job: dict, group_id: int):
     msg       = job["msg"]
     video_msg = job["video_msg"]
     subs      = job["subs"]
@@ -218,13 +231,38 @@ async def run_addsub_job(client, job: dict, group_id: int):
     try:
         if is_cancelled(task_id):
             raise asyncio.CancelledError()
-        await video_msg.reply_document(
-            document=out_path,
-            thumb=thumb,
-            file_name=out_name,
-            caption=f"**{out_name}**\nSubtitles added: {len(subs)}",
-            progress=make_progress_callback(status, "ᴜᴘʟᴏᴀᴅɪɴɢ...", [time.time()], task_id, uid),
-        )
+
+        upload_parts = [(out_path, out_name)]
+        if os.path.getsize(out_path) > SPLIT_SIZE:
+            await safe_edit(status, f"**ꜱᴘʟɪᴛᴛɪɴɢ ꜰɪʟᴇ...**", reply_markup=cancel_button(task_id, uid))
+            try:
+                split_res = await split_video(
+                    out_path, dest_dir, os.path.splitext(out_name)[0], ".mkv",
+                    task_id, group_id, uid,
+                )
+            except Exception as e:
+                log_error(f"run_addsub_job: split failed (uid={uid}, file={out_name})", e)
+                raise
+            if split_res is None:
+                raise asyncio.CancelledError()
+            upload_parts = split_res
+            tlog(task_id, "split", f"split into {len(split_res)} part(s)")
+            os.remove(out_path)
+
+        for idx, (part_path, part_name) in enumerate(upload_parts, 1):
+            if is_cancelled(task_id):
+                raise asyncio.CancelledError()
+            if len(upload_parts) > 1:
+                up_label = f"ᴜᴘʟᴏᴀᴅɪɴɢ ᴘᴀʀᴛ {idx}/{len(upload_parts)}..."
+            else:
+                up_label = "ᴜᴘʟᴏᴀᴅɪɴɢ..."
+            await video_msg.reply_document(
+                document=part_path,
+                thumb=thumb,
+                file_name=part_name,
+                caption=f"**{part_name}**\nSubtitles added: {len(subs)}",
+                progress=make_progress_callback(status, up_label, [time.time()], task_id, uid),
+            )
         await status.delete()
     except asyncio.CancelledError:
         await safe_edit(status, f"**Cancelled!**", reply_markup=None)
@@ -363,4 +401,5 @@ async def _run_extractsub_job(client, job: dict, group_id: int):
         pass
     shutil.rmtree(dest_dir, ignore_errors=True)
     if auto_thumb and os.path.exists(auto_thumb): os.remove(auto_thumb)
-    
+
+                                  
