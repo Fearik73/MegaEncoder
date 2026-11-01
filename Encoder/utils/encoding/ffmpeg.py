@@ -62,7 +62,7 @@ async def ffmpeg_encode(
         if include_subs:
             cmd += ["-sub_charenc", "UTF-8"]
         cmd += ["-i", input_path]
-        cmd += ["-c:v", codec, "-crf", str(crf), "-preset", preset, "-threads", "3"]
+        cmd += ["-c:v", codec, "-crf", str(crf), "-preset", preset, "-threads", "2"]
 
         if tune and tune != "none":
             if codec == "libx265":
