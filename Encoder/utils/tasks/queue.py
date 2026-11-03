@@ -97,6 +97,9 @@ async def group_queue_worker(client, group_id: int):
                     await run_addsub_job(client, job, group_id)
                 elif kind == "extractsub":
                     await run_extractsub_job(client, job, group_id)
+                elif kind == "ocr":
+                    from Encoder.utils.tasks.ocr_job import run_ocr_job
+                    await run_ocr_job(client, job, group_id)
                 else:
                     await run_encode_job(client, job, group_id)
             except Exception as e:
@@ -122,4 +125,5 @@ async def group_queue_worker(client, group_id: int):
                 q.task_done()
     finally:
         _workers_started[group_id] = False
+
         
