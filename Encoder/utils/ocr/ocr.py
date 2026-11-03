@@ -614,4 +614,168 @@ def scan(path: str, is_cancelled, start: float = 0.0, end=None, lang: str = "zh"
                     continue
                 if held:
                     yield out(held)
-                held = {"start": gs, "end": ge, "text": g["text"], "con
+                held = {"start": gs, "end": ge, "text": g["text"], "conf": g["conf"], "flags": {"glare"}}
+    if held:
+        yield out(held)
+
+
+def video_size(path: str):
+    W, H, _ = probe(path)
+    return W, H
+
+
+def test_image(data: bytes, lang: str = "zh"):
+    set_lang(lang)
+    from PIL import Image, ImageDraw
+
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    W, H = im.size
+    ow, oh, sh, y, cw, x0 = region(W, H)
+    small = im.resize((ow, oh))
+    gray = np.asarray(small).min(2) if config.OCR_COLOR != "any" else np.asarray(small.convert("L"))
+    gray = _clean(np.ascontiguousarray(gray[y : y + sh, x0 : x0 + cw]))
+    gray = _refine(gray, gray >= config.OCR_WHITE)
+    cnt = int(np.count_nonzero(gray >= config.OCR_WHITE))
+    area = gray.size
+    lo, hi = int(area * config.OCR_MIN_FRAC), int(area * config.OCR_MAX_FRAC)
+    state = "none" if cnt < lo else ("glare" if cnt > hi else "ok")
+    r = _ocr_one(gray) if state != "glare" else _ocr_strip(gray)
+    sx, sy = W / ow, H / oh
+    d = ImageDraw.Draw(im)
+    d.rectangle((x0 * sx, y * sy, (x0 + cw) * sx, (y + sh) * sy), outline=(0, 255, 0), width=max(3, W // 400))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=85)
+    info = {
+        "strip": config.OCR_STRIP * 100,
+        "margin": config.OCR_MARGIN * 100,
+        "white": cnt * 100 / area,
+        "min": config.OCR_MIN_FRAC * 100,
+        "max": config.OCR_MAX_FRAC * 100,
+        "limit": config.OCR_WHITE,
+        "state": state,
+        "text": r[0] if r else None,
+        "conf": r[1] * 100 if r else None,
+        "chars": (_cjk(r[0]), _expected(gray)) if (r and lang == "zh") else None,
+    }
+    return buf.getvalue(), info
+
+
+_CTX = "spawn"
+_pool = None
+_q = None
+_cancel = None
+_nworkers = 1
+_W = {}
+
+
+def _init(q, cancel, threads, cfg):
+    os.environ["OMP_NUM_THREADS"] = str(threads)
+    os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
+    _W["q"], _W["cancel"] = q, cancel
+    config.apply(cfg)
+    load()
+
+
+def _warm():
+    return True
+
+
+def _part(idx, path, a, b, lo, hi, lang, cfg):
+    q, cancel = _W["q"], _W["cancel"]
+    config.apply(cfg)
+    try:
+        for s, e, text, fr, flag, meta in scan(path, cancel.is_set, a, b, lang):
+            if flag == "beat":
+                q.put(("beat", idx, fr))
+            elif (text is not None or flag == "unread") and lo <= s < hi:
+                q.put(("line", idx, s, e, text, fr, flag, meta))
+        q.put(("done", idx))
+    except Exception as ex:
+        q.put(("error", idx, str(ex)))
+
+
+def start_pool(workers: int):
+    global _pool, _q, _cancel, _nworkers
+    if workers < 2:
+        return
+    ctx = mp.get_context(_CTX)
+    _q, _cancel = ctx.Queue(), ctx.Event()
+    threads = max(1, (os.cpu_count() or workers) // workers)
+    _pool = ProcessPoolExecutor(max_workers=workers, mp_context=ctx, initializer=_init, initargs=(_q, _cancel, threads, config.snapshot()))
+    _nworkers = workers
+    done, _ = wait([_pool.submit(_warm) for _ in range(workers)])
+    if any(f.exception() for f in done):
+        _pool.shutdown(wait=False, cancel_futures=True)
+        _pool = None
+        raise RuntimeError("OCR workers could not start")
+
+
+def scan_auto(path: str, is_cancelled, start: float = 0.0, end=None, lang: str = "zh"):
+    W, H, dur = probe(path)
+    stop = min(end, dur) if (end and dur) else (end or dur)
+    span = (stop - start) if stop else 0
+    if _pool is None or span < config.OCR_PARALLEL_MIN:
+        yield from scan(path, is_cancelled, start, end, lang)
+        return
+    n, ov = _nworkers, 10.0
+    bounds = [start + span * i / n for i in range(n + 1)]
+    _cancel.clear()
+    futs = []
+    try:
+        for i in range(n):
+            lo = -1.0 if i == 0 else bounds[i]
+            hi = 1e12 if i == n - 1 else bounds[i + 1]
+            a = max(start, bounds[i] - ov)
+            b = end if i == n - 1 else bounds[i + 1] + ov
+            futs.append(_pool.submit(_part, i, path, a, b, lo, hi, lang, config.snapshot()))
+    except Exception:
+        globals()["_pool"] = None
+        yield from scan(path, is_cancelled, start, end, lang)
+        return
+    done, frac = set(), [0.0] * n
+    try:
+        while len(done) < n:
+            if is_cancelled():
+                return
+            try:
+                msg = _q.get(timeout=0.5)
+            except queue.Empty:
+                for f in futs:
+                    if f.done() and f.exception():
+                        raise RuntimeError(f"OCR worker failed: {f.exception()}")
+                if all(f.done() for f in futs):
+                    raise RuntimeError("OCR workers stopped unexpectedly")
+                continue
+            kind, idx = msg[0], msg[1]
+            if kind == "line":
+                frac[idx] = msg[5]
+                yield (msg[2], msg[3], msg[4], sum(frac) / n, msg[6], msg[7])
+            elif kind == "beat":
+                frac[idx] = msg[2]
+                yield (None, None, None, sum(frac) / n, "beat", None)
+            elif kind == "done":
+                done.add(idx)
+                frac[idx] = 1.0
+            elif kind == "error":
+                raise RuntimeError(msg[2])
+    finally:
+        _cancel.set()
+        wait(futs, timeout=60)
+        while True:
+            try:
+                _q.get_nowait()
+            except queue.Empty:
+                break
+        _cancel.clear()
+
+
+def merge(items: list, gap: float = 0.4):
+    out = []
+    for it in items:
+        if out and out[-1]["zh"] == it["zh"] and it["start"] - out[-1]["end"] <= gap:
+            out[-1]["end"] = it["end"]
+            fl = set(filter(None, (out[-1].get("flag", "") + "," + it.get("flag", "")).split(",")))
+            out[-1]["flag"] = ",".join(sorted(fl))
+        else:
+            out.append(it)
+    return out
