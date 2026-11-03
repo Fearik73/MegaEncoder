@@ -132,6 +132,23 @@ class Database:
         except Exception as e:
             logger.error(f"Error deleting thumbnail for {uid}: {e}")
 
+    # ---------------- OCR config (/osetting) ----------------
+    async def get_ocr_config(self) -> dict:
+        try:
+            doc = await self.statcol.find_one({"_id": "ocr_config"}) or {}
+        except Exception:
+            doc = {}
+        doc.pop("_id", None)
+        return doc
+
+    async def set_ocr_config(self, key: str, value):
+        await self.statcol.update_one(
+            {"_id": "ocr_config"}, {"$set": {key: value}}, upsert=True,
+        )
+
+    async def unset_ocr_config(self, key: str):
+        await self.statcol.update_one({"_id": "ocr_config"}, {"$unset": {key: ""}})
+
     # ---------------- Group authorization ----------------
     async def authorize_group(self, chat_id: int, title: str = None):
         try:
@@ -163,4 +180,5 @@ class Database:
         except Exception as e:
             logger.error(f"Error fetching authorized groups: {e}")
             return []
+
             
