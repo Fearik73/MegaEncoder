@@ -68,6 +68,12 @@ class EncoderBot(Client):
         from Encoder.utils.bandwidth import tracker
         asyncio.create_task(tracker())
 
+        try:
+            from Encoder.utils.ocr.engine import load_models
+            asyncio.create_task(load_models())
+        except Exception as e:
+            print(f"⚠️ OCR disabled: {e}")
+
         if DB_CHANNEL:
             try:
                 chat = await self.get_chat(DB_CHANNEL)
@@ -77,8 +83,9 @@ class EncoderBot(Client):
 
 
 PLUGINS = [
-    "subtitles", "start", "encode", "settings", "queue", "thumbnail",
+    "subtitles", "ocr", "start", "encode", "settings", "queue", "thumbnail",
     "metadata", "status", "update", "cancel", "auth", "leech", "usersettings",
+    "osetting",
 ]
 
 app = EncoderBot(
