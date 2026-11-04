@@ -33,12 +33,29 @@ async def cmd_ping(client, msg: Message):
     await m.edit(f"**Pong!** `{int((time.time() - t) * 1000)}ms`")
 
 
+def _kill_children():
+    try:
+        kids = psutil.Process().children(recursive=True)
+    except Exception:
+        return
+    for c in kids:
+        try:
+            c.kill()
+        except Exception:
+            pass
+    try:
+        psutil.wait_procs(kids, timeout=3)
+    except Exception:
+        pass
+
+
 @Client.on_message(filters.command("restart") & allowed)
 async def cmd_restart(client, msg: Message):
     if not is_admin(msg.from_user.id):
         return await not_admin(msg)
     await msg.reply(f"Restarting...")
     await asyncio.sleep(1)
+    _kill_children()
     os.execv(sys.executable, [sys.executable, "-m", "Encoder"])
 
 
@@ -209,4 +226,4 @@ async def cmd_log(client, msg: Message):
         caption=f"<b>Bot Logs</b>",
         reply_to_message_id=msg.id,
     )
-    
+
