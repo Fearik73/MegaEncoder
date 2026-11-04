@@ -126,4 +126,3 @@ async def group_queue_worker(client, group_id: int):
     finally:
         _workers_started[group_id] = False
 
-        
