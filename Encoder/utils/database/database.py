@@ -181,4 +181,3 @@ class Database:
             logger.error(f"Error fetching authorized groups: {e}")
             return []
 
-            
