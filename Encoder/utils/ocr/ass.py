@@ -3,14 +3,14 @@ import re
 TIME = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
 RES = {"1080p": (1920, 1080, 60, 3, 1, 10, 40), "4k": (3840, 2160, 120, 6, 2, 20, 80)}
 
-PLAY_H = 1080        # PlayResY of the generated .ass (Fontsize below is on this canvas)
-SIZE = 60            # fixed subtitle size
-FALLBACK_MARGIN = 110  # bottom margin when the hardsub position can't be read reliably
-TOP_MIN, TOP_MAX = 0.78, 0.97  # sane range of the hardsub top (share of frame height)
-OWN_RISE = 0.10      # a per-line margin may sit at most this much above the usual hardsub top
-OPEN_AT = 2.0        # opening credit starts here (seconds)
-END_AFTER = 2.0      # ending credits start this long after the last subtitle
-GOLD = "&H4EC1F2&"   # accent colour (BGR) for the credit lines
+PLAY_H = 1080
+SIZE = 60
+FALLBACK_MARGIN = 110
+TOP_MIN, TOP_MAX = 0.78, 0.97
+OWN_RISE = 0.10
+OPEN_AT = 2.0
+END_AFTER = 2.0
+GOLD = "&H4EC1F2&"
 
 
 def _sec(g):
