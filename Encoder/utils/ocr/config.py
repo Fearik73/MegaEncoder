@@ -45,8 +45,16 @@ VARS = {
                          "Font of the first .ass file."),
     "ASS_FONT_CJK":     ("Noto Sans CJK SC", "str", None,
                          "Font of the second (CJK) .ass file."),
-    "ASS_GAP":          (0.35, "float", (0, 5),
-                         "Gap above the hardsub, as a share of its line height."),
+    "ASS_GAP":          (8, "int", (0, 300),
+                         "Gap above the hardsub (px on a 1080 canvas)."),
+    "ASS_OPEN":         ("Good Subtitled by Fearik\\N[Telegram] - @Donghua_Heavens", "str", None,
+                         "Opening credit, shown before the first subtitle (needs a start time, at least 8s). \\N = new line, - = off."),
+    "ASS_THANKS":       ("Thanks for watching!\\N[Telegram] - @Donghua_Heavens", "str", None,
+                         "Ending credit 1, shown after the last subtitle. \\N = new line, - = off."),
+    "ASS_BYE":          ("Goodbye, see you in the next episode!\\NSubtitled by Fearik", "str", None,
+                         "Ending credit 2, shown after ASS_THANKS. \\N = new line, - = off."),
+    "ASS_CREDIT_SEC":   (6.0, "float", (1, 30),
+                         "How long each credit stays on screen (seconds)."),
 }
 
 RESTART_VARS = ("OCR_MODEL", "OCR_WORKERS")
