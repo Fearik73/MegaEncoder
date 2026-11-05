@@ -56,34 +56,53 @@ async def _reply_doc(m, path, caption):
 class _LiveFile:
     INTERVAL = 10.0
 
-    def __init__(self, m, path):
+    def __init__(self, m, path, render=None, title="live subtitles"):
         self.m, self.path = m, path
+        self.render = render or (lambda its, final: build_srt(its, "zh"))
+        self.title = title
         self.msg = None
         self.last = 0.0
         self.shown = 0
 
-    async def update(self, items, force=False, caption=None):
+    async def update(self, items, force=False, caption=None, final=False):
         now = time.monotonic()
         if not force and (len(items) == self.shown or now - self.last < self.INTERVAL):
             return
         self.last, self.shown = now, len(items)
         with open(self.path, "w", encoding="utf-8") as f:
-            f.write(build_srt(items, "zh"))
-        caption = caption or f"<b>⧉ {sc('live subtitles')}</b>\n{kv('lines', len(items))}"
+            f.write(self.render(items, final))
+        caption = caption or f"<b>⧉ {sc(self.title)}</b>\n{kv('lines', len(items))}"
         for _ in range(3):
             try:
                 if self.msg is None:
                     self.msg = await _reply_doc(self.m, self.path, caption)
                 else:
                     await self.msg.edit_media(InputMediaDocument(self.path, caption=caption, parse_mode=HTML))
-                return
+                return True
             except MessageNotModified:
-                return
+                return True
             except FloodWait as e:
                 await asyncio.sleep(e.value + 1)
             except Exception as e:
                 print(f"[OCR] live file update failed: {e!r}")
-                return
+                return False
+        return False
+
+
+def _ass_text(items, metas, video_size, font, t_start, final):
+    pw, ph, fsize, margin, base_top = ass.auto_layout(metas, video_size[0], video_size[1], ocfg.ASS_GAP)
+    entries = []
+    for p in items:
+        own = None
+        m = p.get("meta")
+        if m and m.get("bands", 1) > 1 and m["conf"] >= 0.9:
+            own = ass.line_margin(m, ph, base_top, ocfg.ASS_GAP)
+        entries.append((p["start"], p["end"], [p["zh"]], own))
+    last_end = max((p["end"] for p in items), default=None)
+    credits = ass.credit_lines(
+        t_start, last_end, (ocfg.ASS_OPEN, ocfg.ASS_THANKS, ocfg.ASS_BYE), ocfg.ASS_CREDIT_SEC, final,
+    )
+    return ass.build_ass_geo(entries, pw, ph, fsize, margin, font, credits)
 
 
 async def run_ocr_job(client, job: dict, group_id: int):
@@ -166,6 +185,13 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
 
     video_size = await asyncio.to_thread(ocr.video_size, video_path)
     items, metas, unread = [], [], []
+    live_ass = None
+    if video_size:
+        live_ass = _LiveFile(
+            msg, os.path.join(dest_dir, f"{base}.arial.ass"),
+            lambda its, fin: _ass_text(its, metas, video_size, ocfg.ASS_FONT, t_start, fin),
+            "live ass",
+        )
     gen = ocr.scan_auto(video_path, cancelled, t_start, t_end)
     try:
         while True:
@@ -181,6 +207,8 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
                 items.append({"start": s, "end": e, "zh": text, "flag": flag, "meta": meta})
                 items.sort(key=lambda p: p["start"])
                 await live.update(items)
+                if live_ass:
+                    await live_ass.update(items)
             await status.show("scanning", frac, [kv("lines", len(items))])
     finally:
         try:
@@ -199,19 +227,15 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
     tidy(items)
     await live.update(items, force=True, caption=f"<b>⧉ {sc('chinese subtitles')}</b>")
 
-    if metas and video_size:
-        pw, ph, fsize, margin, h1 = ass.auto_layout(metas, video_size[0], video_size[1], ocfg.ASS_GAP)
-        entries = []
-        for p in items:
-            own = None
-            if p.get("meta") and p["meta"].get("bands", 1) > 1 and p["meta"]["conf"] >= 0.9:
-                own = ass.line_margin(p["meta"], ph, h1, ocfg.ASS_GAP)
-            entries.append((p["start"], p["end"], [p["zh"]], own))
+    if video_size:
         for font, tag in ((ocfg.ASS_FONT, "arial"), (ocfg.ASS_FONT_CJK, "cjk")):
+            caption = f"<b>⧉ {sc('ass subtitles')}</b>\n{kv('font', esc(font))}\n{kv('size', '60')}"
+            if tag == "arial" and live_ass and await live_ass.update(items, force=True, caption=caption, final=True):
+                continue
             path = os.path.join(dest_dir, f"{base}.{tag}.ass")
             with open(path, "w", encoding="utf-8") as f:
-                f.write(ass.build_ass_geo(entries, pw, ph, fsize, margin, font))
-            await _reply_doc(msg, path, f"<b>⧉ {sc('ass subtitles')}</b>\n{kv('font', esc(font))}\n{kv('quality', '4K')}")
+                f.write(_ass_text(items, metas, video_size, font, t_start, True))
+            await _reply_doc(msg, path, caption)
 
     await status.end(ui.done(len(items), time.monotonic() - t_begin))
     if unread:
@@ -222,4 +246,5 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
             else:
                 spans.append([s0, e0])
         lines = "\n".join(f"{srt_time(a)[:8]} - {srt_time(b)[:8]}" for a, b in spans[:25])
-        await safe_reply(msg, f"<b>⧉ {sc('unread lines')} ({len(spans)})</b>\n<code>{lines}</code>")
+        await safe_reply(msg, f"<b>⧉ {sc('unread lines')} ({len(spans)})</b>\n{lines}")
+    
