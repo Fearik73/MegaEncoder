@@ -107,11 +107,7 @@ def _ass_text(items, metas, video_size, font, t_start, final):
     pw, ph, fsize, margin, base_top = ass.auto_layout(metas, video_size[0], video_size[1], ocfg.ASS_GAP)
     entries = []
     for p in items:
-        own = None
-        m = p.get("meta")
-        if m and m.get("bands", 1) > 1 and m["conf"] >= 0.9:
-            own = ass.line_margin(m, ph, base_top, ocfg.ASS_GAP)
-        entries.append((p["start"], p["end"], [p["zh"]], own))
+        entries.append((p["start"], p["end"], [p["zh"]], None))
     last_end = max((p["end"] for p in items), default=None)
     credits = ass.credit_lines(
         t_start, last_end, (ocfg.ASS_OPEN, ocfg.ASS_THANKS), ocfg.ASS_CREDIT_SEC, final,
@@ -214,7 +210,7 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
                 break
             s, e, text, frac, flag, meta = r
             if meta and meta["conf"] >= 0.9 and "glare" not in flag:
-                metas.append(meta)
+                metas.append({**meta, "start": s})
             if text is None and flag == "unread":
                 unread.append((s, e))
             if text is not None:
@@ -262,4 +258,4 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
         lines = "\n".join(f"{srt_time(a)[:8]} - {srt_time(b)[:8]}" for a, b in spans[:25])
         await safe_reply(msg, f"<b>⧉ {sc('unread lines')} ({len(spans)})</b>\n{lines}")
 
-                                  
+    
