@@ -106,8 +106,13 @@ class _LiveFile:
 def _ass_text(items, metas, video_size, font, t_start, final):
     pw, ph, fsize, margin, base_top = ass.auto_layout(metas, video_size[0], video_size[1], ocfg.ASS_GAP)
     entries = []
+    base_h = ass.base_height(metas)
     for p in items:
-        entries.append((p["start"], p["end"], [p["zh"]], None))
+        own = None
+        m = p.get("meta")
+        if m and m.get("bands", 1) > 1 and m["conf"] >= 0.9:
+            own = ass.line_margin(m, ph, base_top, ocfg.ASS_GAP, base_h)
+        entries.append((p["start"], p["end"], [p["zh"]], own))
     last_end = max((p["end"] for p in items), default=None)
     credits = ass.credit_lines(
         t_start, last_end, (ocfg.ASS_OPEN, ocfg.ASS_THANKS), ocfg.ASS_CREDIT_SEC, final,
