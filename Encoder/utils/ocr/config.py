@@ -50,9 +50,7 @@ VARS = {
     "ASS_OPEN":         ("Good Subtitled by Fearik\\N[Telegram] - @Donghua_Heavens", "str", None,
                          "Opening credit, shown before the first subtitle (needs a start time, at least 8s). \\N = new line, - = off."),
     "ASS_THANKS":       ("Thanks for watching!\\N[Telegram] - @Donghua_Heavens", "str", None,
-                         "Ending credit 1, shown after the last subtitle. \\N = new line, - = off."),
-    "ASS_BYE":          ("Goodbye, see you in the next episode!\\NSubtitled by Fearik", "str", None,
-                         "Ending credit 2, shown after ASS_THANKS. \\N = new line, - = off."),
+                         "Ending credit, shown after the last subtitle. \\N = new line, - = off."),
     "ASS_CREDIT_SEC":   (6.0, "float", (1, 30),
                          "How long each credit stays on screen (seconds)."),
 }
