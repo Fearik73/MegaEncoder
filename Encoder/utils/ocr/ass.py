@@ -8,6 +8,8 @@ SIZE = 60
 FALLBACK_MARGIN = 110
 TOP_MIN, TOP_MAX = 0.78, 0.97
 OWN_RISE = 0.10
+FIRST_N = 6
+TOL = 0.012
 OPEN_AT = 2.0
 END_AFTER = 2.0
 GOLD = "&H4EC1F2&"
@@ -157,12 +159,21 @@ def _median(xs):
     return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
 
 
+def _common(xs):
+    if not xs:
+        return None
+    med = _median(xs)
+    best = max(xs, key=lambda x: (sum(abs(x - y) <= TOL for y in xs), -abs(x - med)))
+    return _median([y for y in xs if abs(y - best) <= TOL])
+
+
 def auto_layout(metas: list, video_w: int, video_h: int, gap: float):
     play_w, play_h = video_w, video_h
     k = play_h / BASE_H
     base = [m for m in metas if m.get("bands", 1) == 1] or metas
-    tops = [m["top"] for m in base if TOP_MIN <= m["top"] <= TOP_MAX]
-    top = _median(tops) if tops else None
+    base = sorted(base, key=lambda m: m.get("start", 0.0))
+    tops = [m["top"] for m in base if TOP_MIN <= m["top"] <= TOP_MAX][:FIRST_N]
+    top = _common(tops)
     margin = round((1 - top) * play_h + gap * k) if top is not None else round(FALLBACK_MARGIN * k)
     return play_w, play_h, round(SIZE * k), margin, top
 
