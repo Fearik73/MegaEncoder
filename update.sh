@@ -8,7 +8,7 @@ REPO="${UPSTREAM_REPO:-$(cfg UPSTREAM_REPO)}"
 BRANCH="${1:-${UPSTREAM_BRANCH:-$(cfg UPSTREAM_BRANCH)}}"
 BRANCH="${BRANCH:-main}"
 
-[ -n "$REPO" ] || { echo "❌ UPSTREAM_REPO set nahi hai (config.env me daalo)."; exit 1; }
+[ -n "$REPO" ] || { echo "❌ UPSTREAM_REPO snot found."; exit 1; }
 
 [ -d .git ] || git init -q
 if git remote get-url origin >/dev/null 2>&1; then
