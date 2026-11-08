@@ -3,7 +3,7 @@ import re
 TIME = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
 RES = {"1080p": (1920, 1080, 60, 3, 1, 10, 40), "4k": (3840, 2160, 120, 6, 2, 20, 80)}
 
-PLAY_H = 1080
+BASE_H = 1080
 SIZE = 60
 FALLBACK_MARGIN = 110
 TOP_MIN, TOP_MAX = 0.78, 0.97
@@ -90,6 +90,7 @@ def build_ass(entries, quality: str, margin: int, font: str) -> str:
 
 def build_ass_geo(entries, width: int, height: int, size: int, margin: int, font: str, credits=()) -> str:
     side = round(height / 54)
+    k = height / BASE_H
     head = (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -103,8 +104,8 @@ def build_ass_geo(entries, width: int, height: int, size: int, margin: int, font
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,"
         f"0,0,2,{side},{side},{margin},1\n"
-        f"Style: Credit,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0.5,0,1,"
-        f"2,1,2,{side},{side},{margin},1\n\n"
+        f"Style: Credit,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,{0.5 * k:g},0,1,"
+        f"{2 * k:g},{k:g},2,{side},{side},{margin},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -114,7 +115,7 @@ def build_ass_geo(entries, width: int, height: int, size: int, margin: int, font
         mv = own[0] if own and own[0] else 0
         rows.append((s, f"Dialogue: 0,{_time(s)},{_time(e)},Default,,0,0,{mv},,{text}"))
     for s, e, raw in credits:
-        rows.append((s, f"Dialogue: 1,{_time(s)},{_time(e)},Credit,,0,0,0,,{_credit_text(raw, e - s)}"))
+        rows.append((s, f"Dialogue: 1,{_time(s)},{_time(e)},Credit,,0,0,0,,{_credit_text(raw, e - s, k)}"))
     rows.sort(key=lambda r: r[0])
     return head + "\n".join(r for _, r in rows) + "\n"
 
@@ -123,19 +124,19 @@ def _hl(m) -> str:
     return "{\\c" + GOLD + "}" + m.group(1) + "{\\c&HFFFFFF&}"
 
 
-def _credit_text(raw: str, dur: float) -> str:
+def _credit_text(raw: str, dur: float, k: float = 1.0) -> str:
     raw = raw.strip().replace("\\n", "\\N").replace("{", "(").replace("}", ")")
     out = []
     for i, part in enumerate(raw.split("\\N")):
         part = re.sub(r"(?<=\bby )(\w+)", _hl, part)
         part = re.sub(r"(@\w+)", _hl, part)
-        out.append(("{\\fs48\\fsp1.5}" if i else "") + part)
+        out.append((f"{{\\fs{round(48 * k)}\\fsp{1.5 * k:g}}}" if i else "") + part)
     fade = int(min(600, dur * 1000 / 4))
-    return "{\\fad(" + str(fade) + "," + str(fade) + ")\\blur1.2}" + "\\N".join(out)
+    return "{\\fad(" + str(fade) + "," + str(fade) + f")\\blur{1.2 * k:g}}}" + "\\N".join(out)
 
 
 def credit_lines(t_start, last_end, texts, sec: float, final: bool):
-    """texts = (opening, thanks, goodbye). A text that is empty or "-" is skipped."""
+    """texts = (opening, thanks). A text that is empty or "-" is skipped."""
     use = [(i, t) for i, t in enumerate(texts) if t and t.strip() not in ("", "-")]
     out = []
     for i, t in use:
@@ -157,18 +158,19 @@ def _median(xs):
 
 
 def auto_layout(metas: list, video_w: int, video_h: int, gap: float):
-    play_h = PLAY_H
-    play_w = max(2, round(play_h * video_w / video_h / 2) * 2)
+    play_w, play_h = video_w, video_h
+    k = play_h / BASE_H
     base = [m for m in metas if m.get("bands", 1) == 1] or metas
     tops = [m["top"] for m in base if TOP_MIN <= m["top"] <= TOP_MAX]
     top = _median(tops) if tops else None
-    margin = round((1 - top) * play_h + gap) if top is not None else FALLBACK_MARGIN
-    return play_w, play_h, SIZE, margin, top
+    margin = round((1 - top) * play_h + gap * k) if top is not None else round(FALLBACK_MARGIN * k)
+    return play_w, play_h, round(SIZE * k), margin, top
 
 
 def line_margin(meta: dict, play_h: int, base_top, gap: float):
     top = meta["top"]
     if base_top is None or not (base_top - OWN_RISE <= top <= TOP_MAX):
         return None
-    return round((1 - top) * play_h + gap)
+    return round((1 - top) * play_h + gap * play_h / BASE_H)
+
     
