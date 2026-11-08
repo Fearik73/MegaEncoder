@@ -30,8 +30,8 @@ class _Cancelled(Exception):
 
 
 class _Status:
-    def __init__(self, msg, task_id: int, uid: int):
-        self.msg, self.task_id, self.uid = msg, task_id, uid
+    def __init__(self, msg, task_id: int, uid: int, src=None):
+        self.msg, self.task_id, self.uid, self.src = msg, task_id, uid, src
         self.t0 = time.monotonic()
         self.last = 0.0
 
@@ -46,6 +46,20 @@ class _Status:
         )
 
     async def end(self, text):
+        await safe_edit(self.msg, text)
+
+    async def finish(self, text):
+        if self.src is not None:
+            try:
+                await safe_reply(self.src, text, parse_mode=HTML, quote=True)
+            except Exception as e:
+                print(f"[OCR] done message failed: {e!r}")
+            else:
+                try:
+                    await self.msg.delete()
+                except Exception:
+                    pass
+                return
         await safe_edit(self.msg, text)
 
 
@@ -100,7 +114,7 @@ def _ass_text(items, metas, video_size, font, t_start, final):
         entries.append((p["start"], p["end"], [p["zh"]], own))
     last_end = max((p["end"] for p in items), default=None)
     credits = ass.credit_lines(
-        t_start, last_end, (ocfg.ASS_OPEN, ocfg.ASS_THANKS, ocfg.ASS_BYE), ocfg.ASS_CREDIT_SEC, final,
+        t_start, last_end, (ocfg.ASS_OPEN, ocfg.ASS_THANKS), ocfg.ASS_CREDIT_SEC, final,
     )
     return ass.build_ass_geo(entries, pw, ph, fsize, margin, font, credits)
 
@@ -128,7 +142,7 @@ async def run_ocr_job(client, job: dict, group_id: int):
         await safe_edit(status_msg, f"**ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ...**", reply_markup=cancel_button(task_id, uid))
     else:
         status_msg = await safe_reply(msg, f"**ᴅᴏᴡɴʟᴏᴀᴅɪɴɢ...**", reply_markup=cancel_button(task_id, uid))
-    status = _Status(status_msg, task_id, uid)
+    status = _Status(status_msg, task_id, uid, msg)
 
     dest_dir   = os.path.join(DOWNLOAD_DIR, f"ocr_{uid}_{int(time.time())}")
     os.makedirs(dest_dir, exist_ok=True)
@@ -229,7 +243,7 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
 
     if video_size:
         for font, tag in ((ocfg.ASS_FONT, "arial"), (ocfg.ASS_FONT_CJK, "cjk")):
-            caption = f"<b>⧉ {sc('ass subtitles')}</b>\n{kv('font', esc(font))}\n{kv('size', '60')}"
+            caption = f"<b>⧉ {sc('ass subtitles')}</b>\n{kv('font', esc(font))}\n{kv('lines', len(items))}"
             if tag == "arial" and live_ass and await live_ass.update(items, force=True, caption=caption, final=True):
                 continue
             path = os.path.join(dest_dir, f"{base}.{tag}.ass")
@@ -237,7 +251,7 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
                 f.write(_ass_text(items, metas, video_size, font, t_start, True))
             await _reply_doc(msg, path, caption)
 
-    await status.end(ui.done(len(items), time.monotonic() - t_begin))
+    await status.finish(ui.done(len(items), time.monotonic() - t_begin))
     if unread:
         spans = []
         for s0, e0 in sorted(unread):
@@ -247,4 +261,5 @@ async def _scan_and_send(msg, status, task_id, t_start, t_end, video_path, dest_
                 spans.append([s0, e0])
         lines = "\n".join(f"{srt_time(a)[:8]} - {srt_time(b)[:8]}" for a, b in spans[:25])
         await safe_reply(msg, f"<b>⧉ {sc('unread lines')} ({len(spans)})</b>\n{lines}")
-    
+
+                                  
