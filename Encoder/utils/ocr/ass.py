@@ -172,7 +172,9 @@ def auto_layout(metas: list, video_w: int, video_h: int, gap: float):
     k = play_h / BASE_H
     base = [m for m in metas if m.get("bands", 1) == 1] or metas
     base = sorted(base, key=lambda m: m.get("start", 0.0))
-    tops = [m["top"] for m in base if TOP_MIN <= m["top"] <= TOP_MAX][:FIRST_N]
+    tops = [m["top"] for m in base if TOP_MIN <= m["top"] <= TOP_MAX]
+    if len(tops) > 200:
+        tops = tops[:: -(-len(tops) // 200)]
     top = _common(tops)
     margin = round((1 - top) * play_h + gap * k) if top is not None else round(FALLBACK_MARGIN * k)
     return play_w, play_h, round(SIZE * k), margin, top
@@ -194,3 +196,4 @@ def line_margin(meta: dict, play_h: int, base_top, gap: float, base_h=None):
     rise = (rows - 1) * (base_h * 1.5 if base_h else OWN_RISE) * play_h
     return max(floor, min(round((1 - top) * play_h + g), floor + round(rise)))
 
+                  
