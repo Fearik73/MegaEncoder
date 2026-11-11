@@ -90,6 +90,9 @@ def _enh(g: np.ndarray):
 
 
 _K = {}
+OUT_DARK = 110
+OUT_R = 3
+_OK = {}
 
 
 def _clean(g: np.ndarray):
@@ -106,6 +109,25 @@ def _clean(g: np.ndarray):
         return np.where(th >= config.OCR_LIFT, g, 0).astype(np.uint8)
     except Exception:
         return g
+
+
+def _outline(g: np.ndarray, c: np.ndarray):
+    if not config.OCR_OUTLINE:
+        return c
+    try:
+        import cv2
+
+        k = _OK.get("k")
+        if k is None:
+            k = _OK["k"] = np.ones((2 * OUT_R + 1, 2 * OUT_R + 1), np.uint8)
+        near = cv2.dilate((g < OUT_DARK).astype(np.uint8), k) > 0
+        return np.where(near, c, 0).astype(np.uint8)
+    except Exception:
+        return c
+
+
+def _persist_k() -> int:
+    return (config.OCR_PERSIST - 1) // 2 if config.OCR_PERSIST >= 3 else 0
 
 
 def _focus(p: np.ndarray):
@@ -167,15 +189,16 @@ def _refine(c: np.ndarray, pm: np.ndarray):
 
 
 def _stream(proc, rsize, rgb, sh, cw):
-    prev = cur = None
+    k = _persist_k()
+    buf, base, nxt = [], 0, 0
 
-    def make(a, b, c):
+    def make(n):
+        i = n - base
+        b = buf[i]
         m = b
-        if config.OCR_PERSIST >= 3:
-            if a is not None:
-                m = np.minimum(m, a)
-            if c is not None:
-                m = np.minimum(m, c)
+        for j in range(max(0, i - k), min(len(buf), i + k + 1)):
+            if j != i:
+                m = np.minimum(m, buf[j])
         return _refine(b, m >= config.OCR_WHITE).tobytes()
 
     while True:
@@ -185,12 +208,20 @@ def _stream(proc, rsize, rgb, sh, cw):
         g = np.frombuffer(raw, np.uint8)
         if rgb:
             g = g.reshape(-1, 3).min(1)
-        c = _clean(np.ascontiguousarray(g.reshape(sh, cw)))
-        if cur is not None:
-            yield make(prev, cur, c)
-        prev, cur = cur, c
-    if cur is not None:
-        yield make(prev, cur, None)
+        g = np.ascontiguousarray(g.reshape(sh, cw))
+        buf.append(_outline(g, _clean(g)))
+        total = base + len(buf)
+        while nxt <= total - 1 - k:
+            yield make(nxt)
+            nxt += 1
+        drop = nxt - k - base
+        if drop > 0:
+            del buf[:drop]
+            base += drop
+    total = base + len(buf)
+    while nxt < total:
+        yield make(nxt)
+        nxt += 1
 
 
 def _prep(fr: np.ndarray, mode: str = "raw"):
@@ -230,6 +261,20 @@ def _prep(fr: np.ndarray, mode: str = "raw"):
     return np.ascontiguousarray(np.stack([crop] * 3, -1)), y0, crop.shape[0] / (y1 - y0)
 
 
+def _overlap(a, b):
+    ox = min(a[7], b[7]) - max(a[2], b[2])
+    oy = min(a[6], b[6]) - max(a[5], b[5])
+    return ox > 0.5 * min(a[7] - a[2], b[7] - b[2]) and oy > 0.5 * min(a[6] - a[5], b[6] - b[5])
+
+
+def _dedupe(boxes):
+    keep = []
+    for b in sorted(boxes, key=lambda b: (-len(b[3]), -b[4])):
+        if not any(_overlap(b, k) for k in keep):
+            keep.append(b)
+    return keep
+
+
 def _read(img):
     result = _run(img)
     if not result:
@@ -240,9 +285,10 @@ def _read(img):
             continue
         ys = [p[1] for p in box]
         xs = [p[0] for p in box]
-        boxes.append((sum(ys) / 4, max(ys) - min(ys), min(xs), txt.strip(), float(score), min(ys), max(ys)))
+        boxes.append((sum(ys) / 4, max(ys) - min(ys), min(xs), txt.strip(), float(score), min(ys), max(ys), max(xs)))
     if not boxes:
         return None
+    boxes = _dedupe(boxes)
     boxes.sort()
     h = sorted(b[1] for b in boxes)[len(boxes) // 2] or 1
     rows, cy = [], None
@@ -394,6 +440,44 @@ def _groups(hits, step):
     return groups
 
 
+SIMPLE = set("一二三十丨口日")
+
+
+def _only_simple(text: str) -> bool:
+    chars = [c for c in text if "\u4e00" <= c <= "\u9fff"]
+    return bool(chars) and all(c in SIMPLE for c in chars)
+
+
+def _confirm(frames, shape, text, skip):
+    n = len(frames)
+    agree = seen = 0
+    for i in sorted({n // 5, (2 * n) // 5, (3 * n) // 5, (4 * n) // 5}):
+        if i == skip or not 0 <= i < n:
+            continue
+        r = _ocr_one(np.frombuffer(frames[i], np.uint8).reshape(shape))
+        seen += 1
+        if r and _sim(r[0], text) >= 0.8:
+            agree += 1
+    return agree, seen
+
+
+def _short_ok(frames, shape, text, conf, idx, meta, ref):
+    simple = _only_simple(text)
+    aligned = None
+    if len(ref) >= 3 and meta["bands"] == 1:
+        mid = sorted(ref)[len(ref) // 2]
+        aligned = abs(meta["top"] + meta["h1"] / 2 - mid) <= 0.02
+        if not aligned:
+            return False
+    strict = simple and aligned is not True
+    if strict and conf < 0.95:
+        return False
+    agree, seen = _confirm(frames, shape, text, idx)
+    if seen == 0:
+        return conf >= 0.9 and not simple
+    return agree >= min(2 if strict else 1, seen)
+
+
 def _events(path, is_cancelled, start, end):
     W, H, dur = probe(path)
     if dur and start >= dur:
@@ -423,6 +507,7 @@ def _events(path, is_cancelled, start, end):
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=rsize * 2)
     cur = [start]
+    ref = []
 
     def frac(t):
         return min(1.0, max(0.0, (t - start) / span)) if span else 0.0
@@ -442,7 +527,7 @@ def _events(path, is_cancelled, start, end):
         n = line["n"]
         if n < 2:
             return None
-        shift = 1.0 / fps if config.OCR_PERSIST >= 3 else 0.0
+        shift = _persist_k() / fps
         s, e = max(start, line["start"] - shift), line["last"] + half + shift
         res = _best(line["frames"], (sh, cw))
         if res is None:
@@ -459,6 +544,11 @@ def _events(path, is_cancelled, start, end):
             flags.add("low")
         meta = measure(line["frames"][idx], geom)
         meta["conf"] = conf
+        if core_len(text) <= 2:
+            if not _short_ok(line["frames"], (sh, cw), text, conf, idx, meta, ref):
+                return None
+        elif conf >= 0.9 and meta["bands"] == 1 and n >= min_n:
+            ref.append(meta["top"] + meta["h1"] / 2)
         return ("line", {"start": s, "end": e, "text": text, "conf": conf, "flags": flags, "meta": meta})
 
     def glare(run):
@@ -606,6 +696,9 @@ def scan(path: str, is_cancelled, start: float = 0.0, end=None, lang: str = "zh"
             for g in groups:
                 if core_len(g["text"]) < config.OCR_MIN_CHARS:
                     continue
+                if core_len(g["text"]) <= 2:
+                    if _only_simple(g["text"]) or len(g["hits"]) < 2 or sum(1 for t, _ in g["hits"] if t == g["text"]) < 2:
+                        continue
                 gs = max(G["start"], g["t0"] - G["step"] / 2)
                 ge = min(G["end"], g["t1"] + G["step"] / 2)
                 if held and gs - held["end"] <= 1.0 and _sim(held["text"], g["text"]) >= 0.7:
@@ -633,7 +726,8 @@ def test_image(data: bytes, lang: str = "zh"):
     ow, oh, sh, y, cw, x0 = region(W, H)
     small = im.resize((ow, oh))
     gray = np.asarray(small).min(2) if config.OCR_COLOR != "any" else np.asarray(small.convert("L"))
-    gray = _clean(np.ascontiguousarray(gray[y : y + sh, x0 : x0 + cw]))
+    raw = np.ascontiguousarray(gray[y : y + sh, x0 : x0 + cw])
+    gray = _outline(raw, _clean(raw))
     gray = _refine(gray, gray >= config.OCR_WHITE)
     cnt = int(np.count_nonzero(gray >= config.OCR_WHITE))
     area = gray.size
@@ -779,3 +873,4 @@ def merge(items: list, gap: float = 0.4):
         else:
             out.append(it)
     return out
+        
