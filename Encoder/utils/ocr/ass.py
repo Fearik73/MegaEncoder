@@ -78,7 +78,7 @@ def build_ass(entries, quality: str, margin: int, font: str) -> str:
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,"
+        f"Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,"
         f"0,0,2,{side},{side},{margin},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -104,9 +104,9 @@ def build_ass_geo(entries, width: int, height: int, size: int, margin: int, font
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,"
+        f"Style: Default,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,"
         f"0,0,2,{side},{side},{margin},1\n"
-        f"Style: Credit,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,{0.5 * k:g},0,1,"
+        f"Style: Credit,{font},{size},&H00FFFFFF,&H000000FF,&H00000000,&H96000000,0,0,0,0,100,100,{0.5 * k:g},0,1,"
         f"{2 * k:g},{k:g},2,{side},{side},{margin},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
@@ -196,4 +196,3 @@ def line_margin(meta: dict, play_h: int, base_top, gap: float, base_h=None):
     rise = (rows - 1) * (base_h * 1.5 if base_h else OWN_RISE) * play_h
     return max(floor, min(round((1 - top) * play_h + g), floor + round(rise)))
 
-                  
