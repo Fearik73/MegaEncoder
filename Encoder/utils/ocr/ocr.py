@@ -92,7 +92,12 @@ def _enh(g: np.ndarray):
 _K = {}
 OUT_DARK = 110
 OUT_R = 3
+OUT_KEEP = 8
 _OK = {}
+
+
+def _scale(h: int) -> float:
+    return max(0.5, h / max(config.OCR_STRIP, 0.05) / 592.0)
 
 
 def _clean(g: np.ndarray):
@@ -111,19 +116,34 @@ def _clean(g: np.ndarray):
         return g
 
 
-def _outline(g: np.ndarray, c: np.ndarray):
+def _near(g: np.ndarray):
     if not config.OCR_OUTLINE:
-        return c
+        return None
     try:
         import cv2
 
-        k = _OK.get("k")
+        r = max(1, round(OUT_R * _scale(g.shape[0])))
+        k = _OK.get(("k", r))
         if k is None:
-            k = _OK["k"] = np.ones((2 * OUT_R + 1, 2 * OUT_R + 1), np.uint8)
-        near = cv2.dilate((g < OUT_DARK).astype(np.uint8), k) > 0
-        return np.where(near, c, 0).astype(np.uint8)
+            k = _OK[("k", r)] = np.ones((2 * r + 1, 2 * r + 1), np.uint8)
+        return cv2.dilate((g < OUT_DARK).astype(np.uint8), k) > 0
     except Exception:
-        return c
+        return None
+
+
+def _support(pm: np.ndarray, near):
+    if near is None:
+        return pm
+    try:
+        import cv2
+
+        r = max(2, round(OUT_KEEP * _scale(pm.shape[0])))
+        k = _OK.get(("keep", r))
+        if k is None:
+            k = _OK[("keep", r)] = np.ones((2 * r + 1, 2 * r + 1), np.uint8)
+        return pm & (cv2.dilate((pm & near).astype(np.uint8), k) > 0)
+    except Exception:
+        return pm
 
 
 def _persist_k() -> int:
@@ -138,8 +158,24 @@ def _focus(p: np.ndarray):
         return p
     w, h, a = st[:, cv2.CC_STAT_WIDTH], st[:, cv2.CC_STAT_HEIGHT], st[:, cv2.CC_STAT_AREA]
     fill = a / np.maximum(w * h, 1)
-    ok = (a >= 5) & (h <= config.OCR_CHAR) & (w <= int(config.OCR_CHAR * 1.3)) & ~((h >= 14) & (fill > 0.8))
+    sc = _scale(p.shape[0])
+    base = (a >= 5) & (h <= config.OCR_CHAR) & (w <= int(config.OCR_CHAR * 1.3)) & ~((w >= 40 * sc) & (h <= max(2.0, 4 * sc)))
+    solid = (h >= 14) & (fill > 0.8)
+    bar = solid & (w < 7 * sc)
+    ok = base & ~(solid & ~bar)
     ok[0] = False
+    base[0] = False
+    if bar.any():
+        cx = st[:, cv2.CC_STAT_LEFT] + w / 2.0
+        top = st[:, cv2.CC_STAT_TOP]
+        bot = top + h
+        cand = np.flatnonzero(base)
+        for i in np.flatnonzero(ok & bar):
+            o = cand[cand != i]
+            near = np.abs(cx[o] - cx[i]) <= 45 * sc
+            ov = np.minimum(bot[o], bot[i]) - np.maximum(top[o], top[i])
+            if not (near & (ov >= 0.4 * np.minimum(h[o], h[i])) & (a[o] >= 5)).any():
+                ok[i] = False
     keep = ok[lab]
     rows = keep.sum(1)
     idx = np.flatnonzero(rows >= 2)
@@ -194,12 +230,12 @@ def _stream(proc, rsize, rgb, sh, cw):
 
     def make(n):
         i = n - base
-        b = buf[i]
+        b, nr = buf[i]
         m = b
         for j in range(max(0, i - k), min(len(buf), i + k + 1)):
             if j != i:
-                m = np.minimum(m, buf[j])
-        return _refine(b, m >= config.OCR_WHITE).tobytes()
+                m = np.minimum(m, buf[j][0])
+        return _refine(b, _support(m >= config.OCR_WHITE, nr)).tobytes()
 
     while True:
         raw = proc.stdout.read(rsize)
@@ -209,7 +245,7 @@ def _stream(proc, rsize, rgb, sh, cw):
         if rgb:
             g = g.reshape(-1, 3).min(1)
         g = np.ascontiguousarray(g.reshape(sh, cw))
-        buf.append(_outline(g, _clean(g)))
+        buf.append((_clean(g), _near(g)))
         total = base + len(buf)
         while nxt <= total - 1 - k:
             yield make(nxt)
@@ -727,8 +763,8 @@ def test_image(data: bytes, lang: str = "zh"):
     small = im.resize((ow, oh))
     gray = np.asarray(small).min(2) if config.OCR_COLOR != "any" else np.asarray(small.convert("L"))
     raw = np.ascontiguousarray(gray[y : y + sh, x0 : x0 + cw])
-    gray = _outline(raw, _clean(raw))
-    gray = _refine(gray, gray >= config.OCR_WHITE)
+    gray = _clean(raw)
+    gray = _refine(gray, _support(gray >= config.OCR_WHITE, _near(raw)))
     cnt = int(np.count_nonzero(gray >= config.OCR_WHITE))
     area = gray.size
     lo, hi = int(area * config.OCR_MIN_FRAC), int(area * config.OCR_MAX_FRAC)
